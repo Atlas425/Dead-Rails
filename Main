@@ -1,0 +1,1581 @@
+loadstring(game:HttpGet('https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source'))()
+local espLib = loadstring(game:HttpGet('https://raw.githubusercontent.com/Atlas425/EspLib/refs/heads/main/API'))()
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/Jxereas/UI-Libraries/main/cerberus.lua"))()
+
+local ore = game.Workspace.Ore
+local towns = game.Workspace.Towns
+local townBuildings = game.Workspace.TownBuildings
+local bulletsFolder = game.Workspace.BulletFolder
+local items = game.Workspace.RuntimeItems
+local CS = game:GetService("CollectionService")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+local ShootRemote = game.ReplicatedStorage.Remotes.Weapon.Shoot
+
+local espParts = {}
+local MAX_ESP_DISTANCE = 1000
+local cleanupInterval = 0.25
+local lastCleanup = tick()
+
+local nametagCache = {}
+local buildingInfo = {}
+
+local infoDisplay = false
+local oreESP = false
+local oreName = false
+local aimbotType = "Silent Aim"
+local aimbotEnabled = false
+local enemyHealth = false
+local activeSnapline = nil
+local snaplinesOrigin = "Center"
+local autoMeleeEnemy = false
+local autoMeleeOre = false
+local meleeWeaponCharging = false
+local nightVision = false
+
+
+local oreTable = {
+    ["SilverOre"] = Color3.fromRGB(192, 192, 192),
+    ["GoldOre"] = Color3.fromRGB(255, 215, 0),
+    ["CoalOre"] = Color3.fromRGB(54, 69, 79),
+}
+
+local resolvedEntities = {
+    ["Model_Runner"] = "Zombie",
+    ["Model_Walker"] = "Zombie",
+    ["Model_Horse"] = "Horse",
+    ["Model_Wolf"] = "Wolf",
+    ["Model_RifleOutlaw"] = "Outlaw",
+    ["Model_RevolverOutlaw"] = "Outlaw",
+    ["Model_Zombie_Sherrif"] = "Zombie",
+    ["Model_Unicorn"] = "Unicorn",
+    ["Model_ZombieMiner"] = "Zombie",
+    ["Model_Banker"] = "Banker",
+    ["Model_ShotgunOutlaw"] = "Outlaw",
+    ["Model_Werewolf"] = "Werewolf"
+}
+
+local miscColors = {
+    
+}
+
+local itemSellPrices = {
+	["NikolaTesla"] = 300,
+	["Unicorn"] = 250,
+	["StrangeMask"] = 250,
+	["JadeSword"] = 250,
+	["BrainInJar"] = 250,
+	["CaptainPrescott"] = 150,
+	["Electrocutioner"] = 150,
+	["VampireKnife"] = 100,
+	["Goliath"] = 100,
+	["Crucifix"] = 50,
+	["Chestplate"] = 50,
+	["GoldBar"] = 50,
+	["GoldStatue"] = 45,
+	["Helmet"] = 40,
+	["GoldPainting"] = 35,
+	["Outlaw"] = 35,
+	["GoldNugget"] = 50,
+	["HolyWater"] = 30,
+	["BoltActionRifle"] = 30,
+	["Rifle"] = 30,
+	["LeftShoulderArmor"] = 30,
+	["RightShoulderArmor"] = 30,
+	["GlassBottle"] = 30,
+	["SilverBar"] = 25,
+	["GoldCup"] = 25,
+	["CavalrySword"] = 25,
+	["Shotgun"] = 21,
+	["EasterBunny"] = 20,
+	["GoldPlate"] = 20,
+	["SilverStatue"] = 20,
+	["Werewolf"] = 20,
+	["NavyRevolver"] = 20,
+	["SawedOffShotgun"] = 18,
+	["Tomahawk"] = 18,
+	["Revolver"] = 15,
+	["GoldPocketWatch"] = 15,
+	["Vampire"] = 15,
+	["SnakeOil"] = 15,
+	["SilverNugget"] = 25,
+	["Mauser"] = 14,
+	["SilverPainting"] = 12,
+	["SilverCup"] = 12,
+	["Banjo"] = 10,
+	["SilverWatch"] = 7,
+	["Bandage"] = 5,
+	["WoodenPainting"] = 5,
+	["Book"] = 5,
+	["Barrel"] = 5,
+	["Vase"] = 5,
+	["Rope"] = 5,
+	["Wheel"] = 5,
+	["StoneStatue"] = 5,
+	["Teapot"] = 5,
+}
+
+local function normalizeItemName(name)
+	return (name:gsub("%s+", ""))
+end
+
+local function getItemSellPrice(itemName)
+	local normalized = normalizeItemName(itemName)
+	return itemSellPrices[normalized] or 0
+end
+
+game.Workspace.RandomBuildings.ChildAdded:Connect(function(child)
+    wait(3)
+
+    if child:FindFirstChild("BillboardGui") then return end
+        if not child:FindFirstChild("StandaloneZombiePart") then return end
+
+        local building = {Building = child, Zombies = #child:FindFirstChild("StandaloneZombiePart").Zombies:GetChildren()}
+        local itemsFound = {}
+        local moneyValue = 0
+        local fuelValue = 0
+
+        local filteredItems = {}
+
+        local cf, size = child:GetBoundingBox()
+        local partsInBox = game.Workspace:GetPartBoundsInBox(cf, size)
+        itemsFound = partsInBox
+
+        for _, instance in pairs(partsInBox) do
+            if instance:IsDescendantOf(items) then
+                table.insert(filteredItems, instance.Parent)
+            end
+        end
+
+        for _, obj in pairs(filteredItems) do
+            local fuel = obj:GetAttribute("Fuel")
+
+
+            if fuel then
+                fuelValue += math.floor(fuel / 5)
+            end
+            
+            local sellPrice = getItemSellPrice(obj.Name)
+            if sellPrice then
+                moneyValue += tonumber(sellPrice)
+            end
+        end
+
+        local textTable = {
+            {Icon = "rbxassetid://10739290877", Text = "Enemies: " .. building.Zombies},
+            {Icon = "rbxassetid://14732311568", Text = "$" .. moneyValue},
+            {Icon = "rbxassetid://6427877531", Text = "Fuel: " .. fuelValue .. "%"},
+        }
+
+        espLib.addDisplayBox(child, textTable)
+end)
+
+
+local function applyDisplayBoxes()
+    for _, build in pairs(game.Workspace.RandomBuildings:GetChildren()) do
+        if build:FindFirstChild("BillboardGui") then continue end
+        if not build:FindFirstChild("StandaloneZombiePart") then continue end
+
+        local building = {Building = build, Zombies = #build:FindFirstChild("StandaloneZombiePart").Zombies:GetChildren()}
+        local itemsFound = {}
+        local moneyValue = 0
+        local fuelValue = 0
+
+        local filteredItems = {}
+
+        local cf, size = build:GetBoundingBox()
+        local partsInBox = game.Workspace:GetPartBoundsInBox(cf, size)
+        itemsFound = partsInBox
+
+        for _, instance in pairs(partsInBox) do
+            if instance:IsDescendantOf(items) then
+                table.insert(filteredItems, instance.Parent)
+            end
+        end
+
+        for _, obj in pairs(filteredItems) do
+            local fuel = obj:GetAttribute("Fuel")
+
+            if fuel then
+                fuelValue += math.floor(fuel / 5)
+            end
+
+            local sellPrice = getItemSellPrice(obj.Name)
+            if sellPrice then
+                moneyValue += tonumber(sellPrice)
+            end
+        end
+
+        local textTable = {
+            {Icon = "rbxassetid://10739290877", Text = "Enemies: " .. building.Zombies},
+            {Icon = "rbxassetid://14732311568", Text = "$" .. moneyValue},
+            {Icon = "rbxassetid://6427877531", Text = "Fuel: " .. fuelValue .. "%"},
+        }
+
+        espLib.addDisplayBox(build, textTable)
+    end
+end
+
+local function removeDisplayBoxes()
+    for _, display in pairs(espLib.cache.DisplayBoxes) do
+        espLib.cache.DisplayBoxes[display] = nil
+        display:Destroy()
+    end
+end
+
+local function createESPBox(part, teamLabel)
+	for _, tracked in ipairs(espParts) do
+		if tracked.part == part then return end
+	end
+
+	local lines = {}
+	for i = 1, 8 do
+		local line = Drawing.new("Line")
+		line.Thickness = 2
+		line.Color = espLib.espColors.CornerBoxes
+		line.Visible = false
+		table.insert(lines, line)
+	end
+
+	table.insert(espParts, {
+		part = part,
+		lines = lines,
+        team = teamLabel,
+	})
+end
+
+local healthBars = {}
+
+local function NewLine(thickness, color, model, ziindex)
+    local line = Drawing.new("Line")
+    line.Visible = true
+    line.From = Vector2.new(0, 0)
+    line.To = Vector2.new(0, 0)
+    line.Color = color 
+    line.Thickness = thickness
+    if ziindex then
+        line.ZIndex = ziindex
+    end
+    line.Transparency = 1
+    return line
+end
+
+local function AddHealthBar(model)
+    if healthBars[model] then return end
+    if not model:FindFirstChild("Humanoid") or not model:FindFirstChild("HumanoidRootPart") then return end
+
+    local backgroundBar = NewLine(5, Color3.fromRGB(0, 0, 0))
+    local greenBar = NewLine(3, Color3.fromRGB(0, 255, 0), 10)
+
+    healthBars[model] = {
+        green = greenBar,
+        background = backgroundBar,
+    }
+end
+
+
+local function RemoveHealthBar(model)
+    local bar = healthBars[model]
+    if bar then
+        bar.green:Remove()
+        bar.background:Remove()
+        healthBars[model] = nil
+    end
+end
+
+local function UpdateHealthBars()
+    for model, bar in pairs(healthBars) do
+        local hum = model:FindFirstChild("Humanoid")
+        local hrp = model:FindFirstChild("HumanoidRootPart")
+        if not hum or not hrp or hum.Health <= 0 then
+            RemoveHealthBar(model)
+            continue
+        end
+
+        local screenPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
+        local pos1 = game.Players.LocalPlayer.Character.HumanoidRootPart.Position
+        local pos2 = model.HumanoidRootPart.Position
+        local distance = (pos1 - pos2).Magnitude
+        if not onScreen or distance >= MAX_ESP_DISTANCE then
+            bar.background.Visible = false
+            bar.green.Visible = false
+            continue
+        end
+
+        local topVec = Camera:WorldToViewportPoint(hrp.Position + Vector3.new(0, 2.6, 0))
+        local bottomVec = Camera:WorldToViewportPoint(hrp.Position - Vector3.new(0, 3, 0))
+
+        local boxHeight = math.abs(topVec.Y - bottomVec.Y)
+        local boxWidth = boxHeight * 0.6
+        local center = Vector2.new(screenPos.X, screenPos.Y)
+
+        local topLeft = Vector2.new(center.X - boxWidth / 2, center.Y - boxHeight / 2)
+        local bottomLeft = Vector2.new(center.X - boxWidth / 2, center.Y + boxHeight / 2)
+
+        local function moveAway(point, target, amount)
+            local dir = (point - target)
+            if dir.Magnitude == 0 then return point end
+            return point + dir.Unit * amount
+        end
+
+        topLeft = moveAway(topLeft, center, 4)
+        bottomLeft = moveAway(bottomLeft, center, 4)
+
+        local barOffset = 6
+        local barX = topLeft.X - barOffset
+
+        local healthPercent = hum.Health / hum.MaxHealth
+        local fullHeight = (bottomLeft - topLeft).Magnitude
+        local greenHeight = fullHeight * healthPercent
+
+        bar.background.From = Vector2.new(barX, bottomLeft.Y)
+        bar.background.To = Vector2.new(barX, topLeft.Y)
+        bar.background.Visible = true
+        bar.background.Thickness = 5
+
+        bar.green.From = Vector2.new(barX, bottomLeft.Y)
+        bar.green.To = Vector2.new(barX, bottomLeft.Y - greenHeight)
+        bar.green.Color = Color3.fromRGB(255, 0, 0):Lerp(Color3.fromRGB(0, 255, 0), healthPercent)
+        bar.green.Visible = true
+        bar.green.Thickness = 3
+    end
+end
+
+
+
+local function moveAway(point, target, amount)
+	local direction = (point - target)
+	if direction.Magnitude == 0 then return point end
+	return point + direction.Unit * amount
+end
+
+function removeNameTag(model)
+	local tag = nametagCache[model]
+	if tag then
+		tag:Destroy()
+		nametagCache[model] = nil
+	end
+end
+
+function addNameTag(model)
+    local rootPart = model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart
+	local hum = model:FindFirstChild("Humanoid")
+
+    if not rootPart or not hum or hum.Health <= 0 then
+		removeNameTag(model)
+		return
+	end
+
+	if not model or not model:IsDescendantOf(workspace) then
+		removeNameTag(model)
+		return
+	end
+
+	local camera = workspace.CurrentCamera
+
+	local screenPos, onScreen = camera:WorldToViewportPoint(rootPart.Position)
+	local distance = (camera.CFrame.Position - rootPart.Position).Magnitude
+
+	if not onScreen or distance > MAX_ESP_DISTANCE then
+		if nametagCache[model] then
+			nametagCache[model].Visible = false
+		end
+		return
+	end
+
+	local tag = nametagCache[model]
+	if not tag then
+		tag = Drawing.new("Text")
+		tag.Center = true
+		tag.Outline = true
+		tag.Font = 2
+		tag.Size = 13
+		tag.Color = espLib.espColors.TextLabels
+
+        local name = resolvedEntities[model.Name]
+
+        if name then
+		    tag.Text = name
+        else
+            tag.Text = model.Name
+        end
+
+        if name == "Unicorn" then
+            local ran1 = math.random(1, 255)
+            local ran2 = math.random(1, 255)
+            local ran3 = math.random(1, 255)
+            tag.Color = Color3.fromRGB(ran1, ran2, ran3)
+        end
+
+		tag.Visible = true
+		nametagCache[model] = tag
+	end
+
+    tag.Color = espLib.espColors.TextLabels
+
+	local topVec = camera:WorldToViewportPoint(rootPart.Position + Vector3.new(0, 2.6, 0))
+	local bottomVec = camera:WorldToViewportPoint(rootPart.Position - Vector3.new(0, 3, 0))
+	local boxHeight = math.abs(topVec.Y - bottomVec.Y)
+	local boxWidth = boxHeight * 0.6
+	local center = Vector2.new(screenPos.X, screenPos.Y)
+
+	local topLeft = moveAway(Vector2.new(center.X - boxWidth/2, center.Y - boxHeight/2), center, 4)
+	local topRight = moveAway(Vector2.new(center.X + boxWidth/2, center.Y - boxHeight/2), center, 4)
+
+	local offset = Vector2.new(0, -16)
+	local namePos = (topLeft + topRight) / 2 + offset
+	tag.Position = namePos
+
+	local minWidth = (topRight - topLeft).Magnitude
+	local baseSize = 13
+    local estimatedTextLen = #tag.Text * baseSize * 0.45
+
+    if estimatedTextLen < minWidth then
+        tag.Size = math.clamp((minWidth / (#tag.Text * 0.45)), 13, 30)
+    else
+        tag.Size = baseSize
+    end
+
+
+	tag.Visible = true
+end
+
+function addItemNameTag(model)
+	if not model or not model:IsDescendantOf(workspace) then
+		removeNameTag(model)
+		return
+	end
+
+	local part = model:FindFirstChildWhichIsA("BasePart")
+	if not part then
+		removeNameTag(model)
+		return
+	end
+
+	local camera = workspace.CurrentCamera
+	local screenPos, onScreen = camera:WorldToViewportPoint(part.Position)
+	local distance = (camera.CFrame.Position - part.Position).Magnitude
+
+	if not onScreen or distance > MAX_ESP_DISTANCE then
+		if nametagCache[model] then
+			nametagCache[model].Visible = false
+		end
+		return
+	end
+
+	local tag = nametagCache[model]
+	if not tag then
+		tag = Drawing.new("Text")
+		tag.Center = true
+		tag.Outline = true
+		tag.Font = 2
+		tag.Size = 13
+		tag.Color = espLib.espColors.TextLabels
+		tag.Text = model.Name
+		tag.Visible = true
+		nametagCache[model] = tag
+	end
+
+	tag.Color = espLib.espColors.TextLabels
+	tag.Position = Vector2.new(screenPos.X, screenPos.Y - 14)
+
+	local baseSize = 13
+	local estimatedTextLen = #tag.Text * baseSize * 0.45
+	tag.Size = baseSize
+
+	tag.Visible = true
+end
+
+local function addOreName()
+    for i, ore in pairs(CS:GetTagged("Ore")) do
+        addItemNameTag(ore.Parent)
+    end
+end
+
+local function removeOreName()
+    for i, ore in pairs(CS:GetTagged("Ore")) do
+        local nametag = nametagCache[ore.Parent]
+
+        if nametag then
+            removeNameTag(ore.Parent)
+        end
+    end
+end
+
+function findParentModel(ore)
+    if ore.Parent.Name == "CoalOre" or ore.Parent.Name == "GoldOre" or ore.Parent.Name == "SilverOre" then return ore.Parent else return ore end
+end
+
+function closestEnemyHead()
+    local mousePos = game:GetService("UserInputService"):GetMouseLocation()
+    local camera = workspace.CurrentCamera
+
+    local closestDistance = math.huge
+    local closestHead = nil
+
+    for _, enemy in pairs(game.CollectionService:GetTagged("Enemy")) do
+        local head = enemy:FindFirstChild("Head")
+        local hum = enemy:FindFirstChild("Humanoid")
+
+        if hum and hum.Health <= 0 then continue end
+        if not enemy:IsDescendantOf(game.Workspace) then continue end
+        if not enemy:FindFirstChild("HumanoidRootPart") then continue end
+        local pos1 = game.Players.LocalPlayer.Character.HumanoidRootPart.Position
+        local pos2 = enemy.HumanoidRootPart.Position
+        local dist = (pos1 - pos2).Magnitude
+        if dist >= 1000 then continue end
+
+        if head then
+            
+            local screenPos, onScreen = camera:WorldToViewportPoint(head.Position)
+            local screen2D = Vector2.new(screenPos.X, screenPos.Y)
+            local distance = (mousePos - screen2D).Magnitude
+
+            if distance < closestDistance and distance <= MAX_ESP_DISTANCE then
+                closestDistance = distance
+                closestHead = head
+            end
+        end
+    end
+
+    return closestHead
+end
+
+local function createSnapline()
+    local targetLine = Drawing.new("Line")
+    targetLine.Thickness = 3.5
+    targetLine.Color = Color3.fromRGB(255, 0, 0)
+    targetLine.Transparency = 1
+    targetLine.ZIndex = 2
+    targetLine.Visible = true
+    activeSnapline = targetLine
+end
+
+local function updateSnapline()
+    if not espLib.espSettings.Snaplines then return end
+
+    local camera = workspace.CurrentCamera
+    local viewportSize = camera.ViewportSize
+    local screenCenter = Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
+    local targetPart = closestEnemyHead()
+
+    if targetPart then
+        local screenPos, onScreen = camera:WorldToViewportPoint(targetPart.Position)
+        local hum = targetPart.Parent:FindFirstChild("Humanoid")
+
+        if onScreen and screenPos.Z > 0.01 then
+            local targetPos2D = Vector2.new(screenPos.X, screenPos.Y)
+            local fovRadius = espLib.espSettings.FovRadius * 2
+
+            if (targetPos2D - screenCenter).Magnitude <= fovRadius then
+                if snaplinesOrigin == "Center" then
+                    activeSnapline.From = screenCenter
+                else
+                    activeSnapline.From = Vector2.new(viewportSize.X / 2, viewportSize.Y)
+                end
+
+                activeSnapline.To = targetPos2D
+                activeSnapline.Visible = true
+                activeSnapline.Color = espLib.espColors.Snaplines
+                return
+            end
+        end
+    end
+
+    activeSnapline.Visible = false
+end
+
+function closestOre()
+    local mousePos = game:GetService("UserInputService"):GetMouseLocation()
+    local camera = workspace.CurrentCamera
+
+    local closestDistance = 10000
+    local closestPart = nil
+
+    for _, ore in pairs(game.CollectionService:GetTagged("Ore")) do
+
+        if not ore:IsDescendantOf(game.Workspace) then continue end
+
+        local part
+
+        if ore:IsA("BasePart") then
+            part = ore.Parent.PrimaryPart
+            else
+            part = ore.PrimaryPart
+        end
+
+        if not part then
+            continue
+        end
+
+        local pos1 = game.Players.LocalPlayer.Character.HumanoidRootPart.Position
+        local pos2 = part.Position
+        local dist = (pos1 - pos2).Magnitude
+
+        if part then
+            
+            local screenPos, onScreen = camera:WorldToViewportPoint(part.Position)
+            local screen2D = Vector2.new(screenPos.X, screenPos.Y)
+            local distance = (mousePos - screen2D).Magnitude
+
+            if distance < closestDistance  then
+                closestDistance = distance
+                closestPart = part
+            end
+        end
+    end
+
+    return closestPart
+end
+
+local meleeModule = require(game.ReplicatedStorage.Client.Melee.ClientMeleeHandler)
+local remotes = require(game.ReplicatedStorage.Shared.Remotes)
+
+local originalHandler = meleeModule._meleeActionHandler
+local spoofEnabled = true
+meleeModule._meleeActionHandler = function(_, inputState, _)
+	if not spoofEnabled then
+		return originalHandler(_, inputState, _)
+	end
+
+	local tool = meleeModule._equippedMelee
+	if not tool then return Enum.ContextActionResult.Pass end
+
+	local now = workspace:GetServerTimeNow()
+	local target = closestEnemyHead() or closestOre()
+	if not target then return Enum.ContextActionResult.Pass end
+
+	if inputState == Enum.UserInputState.Begin then
+		remotes.Events.ChargeMelee:FireServer(tool, now)
+	elseif inputState == Enum.UserInputState.End then
+		local camera = workspace.CurrentCamera
+		local lookVector = (target.Position - camera.CFrame.Position).Unit
+		remotes.Events.SwingMelee:FireServer(tool, now, lookVector)
+	end
+
+	return Enum.ContextActionResult.Sink
+end
+
+local function drawDebugLine(origin, direction, color, target)
+	local part = Instance.new("Part")
+	part.Anchored = true
+	part.CanCollide = false
+	part.Transparency = 0.5
+	part.Size = Vector3.new(0.1, 0.1, (target.Position - origin).Magnitude)
+	part.CFrame = CFrame.new(origin, target.Position) * CFrame.new(0, 0, -part.Size.Z / 2)
+	part.BrickColor = BrickColor.new(color or "Bright red")
+	part.Material = Enum.Material.Neon
+	part.Parent = workspace
+
+	game.Debris:AddItem(part, 0.3)
+end
+
+local meleeModule = require(game.ReplicatedStorage.Client.Melee.ClientMeleeHandler)
+local MeleeUtil = require(game.ReplicatedStorage.Shared.Melee.MeleeUtil)
+local MeleeAttrs = require(game.ReplicatedStorage.Shared.Melee.MeleeAttributes)
+local Remotes = require(game.ReplicatedStorage.Shared.Remotes)
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+local spoofDirection = true
+local oldMeleeActionHandler = meleeModule._meleeActionHandler
+
+meleeModule._meleeActionHandler = function(_, inputState, _)
+	local char = LocalPlayer.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not meleeModule._equippedMelee then
+		return Enum.ContextActionResult.Pass
+	end
+
+	local meleeTool = meleeModule._equippedMelee
+	local now = workspace:GetServerTimeNow()
+
+	if spoofDirection and hrp then
+		local enemy = closestEnemyHead()
+		local ore = closestOre()
+
+		local target
+		if enemy and ore then
+			target = ((enemy.Position - hrp.Position).Magnitude < (ore.Position - hrp.Position).Magnitude) and enemy or ore
+		else
+			target = enemy or ore
+		end
+
+		if inputState == Enum.UserInputState.Begin then
+			if meleeModule._animationThread then
+				task.cancel(meleeModule._animationThread)
+				meleeModule._animationThread = nil
+			end
+		
+			meleeModule._chargeDelayThread = task.delay(0.2, function()
+				MeleeUtil.setLocalState(meleeTool, MeleeAttrs.charge_start_time, now)
+				Remotes.Events.ChargeMelee:FireServer(meleeTool, now)
+				meleeModule._chargeDelayThread = nil
+			end)
+
+		elseif inputState == Enum.UserInputState.End then
+			MeleeUtil.setLocalState(meleeTool, MeleeAttrs.last_attack_time, now)
+			MeleeUtil.setLocalState(meleeTool, MeleeAttrs.charge_start_time, nil)
+
+			if target then
+				local spoofedDirection = (target.Position - hrp.Position).Unit
+				Remotes.Events.SwingMelee:FireServer(meleeTool, now, spoofedDirection)
+				drawDebugLine(char.Head.Position, spoofedDirection, "Bright blue", target)
+			else
+				local realDirection = LocalPlayer:GetMouse().Hit.LookVector
+				Remotes.Events.SwingMelee:FireServer(meleeTool, now, realDirection)
+			end
+
+			if meleeModule._chargeDelayThread then
+				task.cancel(meleeModule._chargeDelayThread)
+				meleeModule._chargeDelayThread = nil
+			end
+			if meleeModule._animationThread then
+				task.cancel(meleeModule._animationThread)
+				meleeModule._animationThread = nil
+			end
+			
+		end
+		return Enum.ContextActionResult.Sink
+	end
+
+	return oldMeleeActionHandler(_, inputState, _)
+end
+
+
+local MIN_TIME_BETWEEN_SWINGS = 0.15
+local RANGE = 30
+local isAutoSwinging = true
+
+local fakeInput = {
+	UserInputType = Enum.UserInputType.MouseButton1
+}
+
+local HOLD_TIME = 0.65
+local COOLDOWN_WAIT = 0.05
+
+local function getClosestTargetToMouse()
+    local mouse = LocalPlayer:GetMouse()
+    local mousePos = Vector2.new(mouse.X, mouse.Y)
+    
+    local enemy = closestEnemyHead()
+    local ore = closestOre()
+    
+    local function getScreenDistance(target)
+        if not target then return math.huge end
+        local screenPos, visible = workspace.CurrentCamera:WorldToScreenPoint(target.Position)
+        if not visible then return math.huge end
+        return (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+    end
+
+    local enemyDist = getScreenDistance(enemy)
+    local oreDist = getScreenDistance(ore)
+
+    if enemyDist <= 9999 and oreDist <= 9999 then
+        return enemyDist < oreDist and enemy or ore
+    elseif enemyDist <= 9999 then
+        return enemy
+    elseif oreDist <= 9999 then
+        return ore
+    end
+    return nil
+end
+
+task.spawn(function()
+    while true do
+        if not isAutoSwinging then 
+            task.wait(0.1) 
+            continue 
+        end
+        
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp then 
+            task.wait() 
+            continue 
+        end
+
+        local target = getClosestTargetToMouse()
+        local inRange = target and (target.Position - hrp.Position).Magnitude <= RANGE
+
+        if inRange then
+            if meleeModule._equippedMelee and not MeleeUtil.isOnCooldown(meleeModule._equippedMelee) then
+                meleeModule._meleeActionHandler(fakeInput, Enum.UserInputState.Begin, fakeInput)
+                task.wait(HOLD_TIME)
+                meleeModule._meleeActionHandler(fakeInput, Enum.UserInputState.End, fakeInput)
+                task.wait(COOLDOWN_WAIT)
+            else
+                task.wait(0.1)
+            end
+        else
+            task.wait(0.1)
+        end
+    end
+end)
+
+local RunService = game:GetService("RunService")
+local camera = workspace.CurrentCamera
+local esp_settings = { enabled = true, skel = true }
+
+local skeletons = {}
+
+local function createLine()
+    local line = Drawing.new("Line")
+    line.Visible = false
+    line.Thickness = 1.5
+    line.Color = Color3.fromRGB(255, 255, 255)
+    return line
+end
+
+local function createSkeleton()
+    return {
+        head = createLine(),
+        torso = createLine(),
+        leftarm = createLine(),
+        rightarm = createLine(),
+        leftleg = createLine(),
+        rightleg = createLine(),
+        connection = nil
+    }
+end
+
+local function removeSkeleton(model)
+    local skeleton = skeletons[model]
+    if skeleton then
+        if skeleton.connection then
+            skeleton.connection:Disconnect()
+        end
+        for _, line in pairs(skeleton) do
+            if typeof(line) == "userdata" and line.Remove then
+                line:Remove()
+            end
+        end
+        skeletons[model] = nil
+    end
+end
+
+function drawSkeleton(model)
+    if typeof(model) ~= "Instance" or not model:IsA("Model") then return end
+    if not model:IsDescendantOf(workspace) then return end
+
+    local humanoid = model:FindFirstChildOfClass("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then return end
+    if humanoid.RigType ~= Enum.HumanoidRigType.R6 then return end
+
+    if skeletons[model] and skeletons[model].connection then
+        return
+    end
+
+    local skeleton = createSkeleton()
+    skeletons[model] = skeleton
+
+    skeleton.connection = RunService.RenderStepped:Connect(function()
+        if not model:IsDescendantOf(workspace) or humanoid.Health <= 0 then
+            removeSkeleton(model)
+            return
+        end
+
+        local torso = model:FindFirstChild("Torso")
+        local head = model:FindFirstChild("Head")
+        local leftArm = model:FindFirstChild("Left Arm")
+        local rightArm = model:FindFirstChild("Right Arm")
+        local leftLeg = model:FindFirstChild("Left Leg")
+        local rightLeg = model:FindFirstChild("Right Leg")
+
+        if not (torso and head and leftArm and rightArm and leftLeg and rightLeg) then
+            removeSkeleton(model)
+            return
+        end
+
+        local function toScreen(part)
+            local pos, onScreen = camera:WorldToViewportPoint(part.Position)
+            return Vector2.new(pos.X, pos.Y), onScreen
+        end
+
+        local torsoPos, onScreen = toScreen(torso)
+        if not onScreen or not esp_settings.enabled then
+            for _, line in pairs(skeleton) do
+                if typeof(line) == "userdata" and line.Visible ~= nil then
+                    line.Visible = false
+                end
+            end
+            return
+        end
+
+        local headPos = toScreen(head)
+        local leftArmPos = toScreen(leftArm)
+        local rightArmPos = toScreen(rightArm)
+        local leftLegPos = toScreen(leftLeg)
+        local rightLegPos = toScreen(rightLeg)
+
+        skeleton.head.From = headPos
+        skeleton.head.To = torsoPos
+
+        skeleton.leftarm.From = torsoPos
+        skeleton.leftarm.To = leftArmPos
+
+        skeleton.rightarm.From = torsoPos
+        skeleton.rightarm.To = rightArmPos
+
+        skeleton.leftleg.From = torsoPos
+        skeleton.leftleg.To = leftLegPos
+
+        skeleton.rightleg.From = torsoPos
+        skeleton.rightleg.To = rightLegPos
+
+        skeleton.torso.From = Vector2.new(torsoPos.X, torsoPos.Y - 5)
+        skeleton.torso.To = Vector2.new(torsoPos.X, torsoPos.Y + 5)
+
+        for _, line in pairs(skeleton) do
+            if typeof(line) == "userdata" and line.Visible ~= nil then
+                line.Visible = esp_settings.skel
+            end
+        end
+    end)
+end
+
+
+game:GetService("RunService").RenderStepped:Connect(function()
+    UpdateHealthBars()
+    updateSnapline()
+
+    for _, enemy in pairs(CS:GetTagged("Enemy")) do
+
+            drawSkeleton(enemy)
+        end
+
+    for model, tag in pairs(nametagCache) do
+		if not model:IsDescendantOf(workspace) and nametagCache[model] then
+			removeNameTag(model)
+		else
+			local hum = model:FindFirstChild("Humanoid")
+			if not hum or hum.Health <= 0 and nametagCache[model] then
+				removeNameTag(model)
+			end
+		end
+	end
+
+    if espLib.espSettings.Nametags then
+
+        for _, enemy in pairs(CS:GetTagged("Enemy")) do
+
+            addNameTag(enemy)
+        end
+    else
+        for _, enemy in pairs(CS:GetTagged("Enemy")) do
+
+            removeNameTag(enemy)
+        end
+    end
+
+    if oreName then
+
+        for _, enemy in pairs(CS:GetTagged("Ore")) do
+
+            local parent = findParentModel(enemy)
+            addItemNameTag(parent)
+        end
+    else
+        removeOreName()
+    end
+
+	local camera = workspace.CurrentCamera
+	local now = tick()
+
+	if now - lastCleanup >= cleanupInterval then
+		for i = #espParts, 1, -1 do
+			if not espParts[i].part or not espParts[i].part:IsDescendantOf(workspace) then
+				for _, line in ipairs(espParts[i].lines) do
+					line:Remove()
+				end
+				table.remove(espParts, i)
+			end
+		end
+		lastCleanup = now
+	end
+
+	for _, esp in ipairs(espParts) do
+		local rootPart = esp.part
+		local lines = esp.lines
+
+		if not rootPart or not rootPart:IsDescendantOf(workspace) then
+			continue
+		end
+
+		local screenPos, onScreen = camera:WorldToViewportPoint(rootPart.Position)
+		local distance = (camera.CFrame.Position - rootPart.Position).Magnitude
+
+		if not onScreen or distance > MAX_ESP_DISTANCE then
+			for _, line in ipairs(lines) do
+				line.Visible = false
+			end
+			continue
+		end
+
+		local topVec = camera:WorldToViewportPoint(rootPart.Position + Vector3.new(0, 2.6, 0))
+		local bottomVec = camera:WorldToViewportPoint(rootPart.Position - Vector3.new(0, 3, 0))
+
+		local boxHeight = math.abs(topVec.Y - bottomVec.Y)
+		local boxWidth = boxHeight * 0.6
+		local center = Vector2.new(screenPos.X, screenPos.Y)
+		local boxSize = Vector2.new(boxWidth, boxHeight)
+
+		local topLeft = moveAway(Vector2.new(center.X - boxWidth/2, center.Y - boxHeight/2), center, 4)
+		local topRight = moveAway(Vector2.new(center.X + boxWidth/2, center.Y - boxHeight/2), center, 4)
+		local bottomLeft = moveAway(Vector2.new(center.X - boxWidth/2, center.Y + boxHeight/2), center, 4)
+		local bottomRight = moveAway(Vector2.new(center.X + boxWidth/2, center.Y + boxHeight/2), center, 4)
+
+		local minSide = math.min(boxWidth, boxHeight)
+		local lineLength = math.clamp(minSide * 0.2, 2, math.max(2, minSide * 0.45))
+		local thickness = math.clamp(boxSize.X / 100, 1, 2)
+
+		lines[1].From = topLeft
+		lines[1].To = topLeft + Vector2.new(lineLength, 0)
+
+		lines[2].From = topLeft
+		lines[2].To = topLeft + Vector2.new(0, lineLength)
+
+		lines[3].From = topRight
+		lines[3].To = topRight - Vector2.new(lineLength, 0)
+
+		lines[4].From = topRight
+		lines[4].To = topRight + Vector2.new(0, lineLength)
+
+		lines[5].From = bottomLeft
+		lines[5].To = bottomLeft + Vector2.new(lineLength, 0)
+
+		lines[6].From = bottomLeft
+		lines[6].To = bottomLeft - Vector2.new(0, lineLength)
+
+		lines[7].From = bottomRight
+		lines[7].To = bottomRight - Vector2.new(lineLength, 0)
+
+		lines[8].From = bottomRight
+		lines[8].To = bottomRight - Vector2.new(0, lineLength)
+
+		for _, line in ipairs(lines) do
+			line.Visible = true
+			line.Thickness = thickness
+			line.Color = espLib.espColors.CornerBoxes
+		end
+	end
+end)
+
+local function destroyCornerBoxes()
+	for i = #espParts, 1, -1 do
+		local esp = espParts[i]
+
+		for _, line in ipairs(esp.lines) do
+			if typeof(line) == "userdata" and line.Remove then
+				line:Remove()
+			end
+		end
+		table.remove(espParts, i)
+	end
+end
+
+local function applyChamsAll()
+
+    for _, enemy in pairs(CS:GetTagged("Enemy")) do
+
+        for i, part in pairs(enemy:GetChildren()) do
+            if part.Name == "Head" then
+                    
+                local adornment = Instance.new("CylinderHandleAdornment")
+                adornment.Adornee = part
+                adornment.ZIndex = 10
+                adornment.AlwaysOnTop = true
+                adornment.Color3 = espLib.espColors.Chams
+                adornment.Transparency = espLib.transparencySettings.Chams
+                adornment.Height = 1.15
+                adornment.CFrame = CFrame.Angles(math.rad(90), 0, 0)
+                adornment.Radius = 0.6
+                adornment.Parent = part
+
+                espLib.cache.Chams[part] = {adornment}
+
+                elseif part:IsA("BasePart") then
+
+                espLib.createChams(part)
+            end
+        end
+    end
+end
+
+local function applyChams(model)
+model:WaitForChild("Humanoid")
+wait()
+
+    for i, part in pairs(model:GetChildren()) do
+        if part.Name == "Head" then
+                
+            local adornment = Instance.new("CylinderHandleAdornment")
+            adornment.Adornee = part
+            adornment.ZIndex = 10
+            adornment.AlwaysOnTop = true
+            adornment.Color3 = espLib.espColors.Chams
+            adornment.Transparency = espLib.transparencySettings.Chams
+            adornment.Height = 1.15
+            adornment.CFrame = CFrame.Angles(math.rad(90), 0, 0)
+            adornment.Radius = 0.6
+            adornment.Parent = part
+
+            espLib.cache.Chams[part] = {adornment}
+
+            elseif part:IsA("BasePart") then
+
+            espLib.createChams(part)
+        end
+    end
+end
+
+CS:GetInstanceAddedSignal("Enemy"):Connect(function(instance)
+    instance:WaitForChild("Humanoid")
+    wait()
+    if espLib.espSettings.Chams then
+        applyChams(instance)
+    end
+
+    if espLib.espSettings.CornerBoxes then
+        local hrp = instance:FindFirstChild("HumanoidRootPart")
+        
+        if hrp then
+            createESPBox(hrp)
+        end
+    end
+
+    if enemyHealth then
+        AddHealthBar(instance)
+    end
+end)
+
+local function addOreESP()
+    while true do
+        if not oreESP then
+            wait(2)
+            continue
+        end
+
+        for i, ore in pairs(CS:GetTagged("Ore")) do
+            if ore.Parent:FindFirstChildOfClass("Highlight") then continue end
+            local highlight = Instance.new("Highlight")
+            highlight.FillColor = oreTable[ore.Parent.Name]
+            highlight.FillTransparency = 0.5
+            highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            highlight.OutlineColor = Color3.fromRGB(0, 0, 0)
+            highlight.Parent = ore.Parent
+        end
+
+        wait(2)
+    end
+end
+
+coroutine.wrap(addOreESP)()
+
+local function removeOreESP()
+    for i, ore in pairs(CS:GetTagged("Ore")) do
+        if ore:FindFirstChildOfClass("Highlight") then
+            ore:FindFirstChildOfClass("Highlight"):Destroy()
+        end
+    end
+end
+
+local function removeChams()
+    for model, chamList in pairs(espLib.cache.Chams) do
+        for _, cham in ipairs(chamList) do
+            if cham then
+                cham:Destroy()
+            end
+        end
+    end
+
+    espLib.cache.Chams = {}
+end
+
+----------------------------AimingFunctions--------------------------------------------------
+local mt = getrawmetatable(game)
+setreadonly(mt, false)
+local oldNamecall = mt.__namecall
+local hookEnabled = false
+
+local function toggleHook()
+    hookEnabled = not hookEnabled
+
+    if hookEnabled and aimbotType == "Silent" then
+        
+        mt.__namecall = newcclosure(function(self, ...)
+            local method = getnamecallmethod()
+            local args = {...}
+            
+            if method == "FireServer" and self == ShootRemote and #args >= 4 then
+                local timestamp = args[1]
+                local weaponState = args[2]
+                local originalCFrame = args[3]
+                local originalHitTable = args[4]
+
+                if not closestEnemyHead() then return self.FireServer(self, unpack(args)) end
+
+                if closestEnemyHead() and not closestEnemyHead().Parent:FindFirstChild("HumanoidRootPart") then
+                    return self.FireServer(self, unpack(args))
+                end
+
+                local viewportSize = game.Workspace.CurrentCamera.ViewportSize
+                local screenPos, onScreen = game.Workspace.CurrentCamera:WorldToViewportPoint(closestEnemyHead().Position)
+                local targetPos2D = Vector2.new(screenPos.X, screenPos.Y)
+                local fovRadius = espLib.espSettings.FovRadius * 2
+                local screenCenter = Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
+    
+                if (targetPos2D - screenCenter).Magnitude >= fovRadius or not closestEnemyHead() then
+                    mt.__namecall = oldNamecall
+                    return
+                end
+                
+                local currentWeapon = LocalPlayer.Character:FindFirstChildOfClass("Tool")
+                if currentWeapon then
+                    local head = closestEnemyHead()
+                    if head then
+                        local character = head.Parent
+                        local humanoid = character:FindFirstChildOfClass("Humanoid")
+                        
+                        if humanoid then
+
+                            local origin = Camera.CFrame.Position
+                            local direction = (head.Position - origin).Unit
+                            local spoofedCFrame = CFrame.new(origin, origin + direction)
+                            args[3] = spoofedCFrame
+                            
+                            args[4] = originalHitTable or {}
+                            args[4]["2"] = humanoid
+                            
+                            return self.FireServer(self, unpack(args))
+                        end
+                    end
+                end
+            end
+            
+            return oldNamecall(self, ...)
+        end)
+    else
+        mt.__namecall = oldNamecall
+    end
+end
+
+local function shootSilentBullet()
+    local currentWeapon = game.Players.LocalPlayer.Character:FindFirstChildOfClass("Tool")
+    if not currentWeapon then return end
+
+    local head = closestEnemyHead()
+    if not head then return end
+
+    local character = head.Parent
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+
+    local camera = workspace.CurrentCamera
+    local cameraPosition = camera.CFrame.Position
+    local directionToHead = (head.Position - cameraPosition).Unit
+    local spoofedCFrame = CFrame.new(cameraPosition, cameraPosition + directionToHead)
+
+    local hitTable = {
+        ["2"] = humanoid
+    }
+
+    local args = {
+        workspace:GetServerTimeNow(),
+        currentWeapon,
+        spoofedCFrame,
+        hitTable
+    }
+
+    game.ReplicatedStorage.Remotes.Weapon.Shoot:FireServer(unpack(args))
+end
+
+local function autoShoot()
+    while true do
+        if not game.Players.LocalPlayer.Character then continue end
+        local currentWeapon = game.Players.LocalPlayer.Character:FindFirstChildOfClass("Tool")
+        if not currentWeapon then
+            wait(0.2)
+            continue
+        end
+
+        if not currentWeapon:FindFirstChild("WeaponConfiguration") then
+            wait()
+            continue
+        end
+        if not currentWeapon:FindFirstChild("WeaponConfiguration"):FindFirstChild("WeaponType") then
+            wait()
+            continue
+        end
+        if not closestEnemyHead() then
+            wait()
+            continue
+        end
+
+        local viewportSize = game.Workspace.CurrentCamera.ViewportSize
+        local screenPos, onScreen = game.Workspace.CurrentCamera:WorldToViewportPoint(closestEnemyHead().Position)
+        local targetPos2D = Vector2.new(screenPos.X, screenPos.Y)
+        local fovRadius = espLib.espSettings.FovRadius * 2
+        local screenCenter = Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
+
+        if (targetPos2D - screenCenter).Magnitude >= fovRadius or not closestEnemyHead() then
+            wait()
+            continue
+        end
+
+        local pos1 = game.Players.LocalPlayer.Character.HumanoidRootPart.Position
+        local pos2 = closestEnemyHead().Position
+        local dist = (pos1 - pos2).Magnitude
+
+        if dist >= 400 then
+            wait()
+            continue
+        end
+
+        local isGun = currentWeapon.WeaponConfiguration.WeaponType
+
+        if isGun.Value ~= "Gun" then
+            wait(0.2)
+            continue
+        end
+
+        if currentWeapon and aimbotType == "Autofire" then
+
+            if closestEnemyHead() then
+
+                local serverState = currentWeapon.ServerWeaponState.CurrentAmmo
+
+                if serverState.Value ~= 0 then
+                    shootSilentBullet()
+                    local sound = currentWeapon.WeaponConfiguration.Sounds.Shoot
+                    sound:Play()
+                end
+            end
+            wait(currentWeapon.WeaponConfiguration.FireDelay.Value)
+        else
+            wait()
+        end
+    end
+end
+
+coroutine.wrap(autoShoot)()
+
+local function removeFovCircle()
+    for _, fov in pairs(espLib.cache.FovDrawings) do
+        if not fov or not fov.__OBJECT_EXISTS then continue end
+        fov:Destroy()
+        fov = nil
+    end
+end
+
+game.Lighting:GetPropertyChangedSignal("ClockTime"):Connect(function()
+    if nightVision and (game.Lighting.ClockTime <= 8 or game.Lighting.ClockTime >= 20) then
+        game.Lighting.ClockTime = 12
+    end
+end)
+
+
+
+
+-------------------------------------------------------------UILIBRARY------------------------------------------------------------
+local window = Library.new("Window")
+
+window:LockScreenBoundaries(true)
+
+local combat = window:Tab("Combat")
+local visuals = window:Tab("ESP")
+local misc = window:Tab("Miscellaneous")
+local rendering = window:Tab("Rendering")
+
+local worldRendering = rendering:Section("World Rendering")
+local worldTitle = worldRendering:Title("World Rendering")
+
+local section = combat:Section("Combat")
+local otherCombat = combat:Section("Other Combat")
+
+local title = section:Title("Aim Settings")
+
+local nightVisionToggle = worldRendering:Toggle("Night Vision", function(bool)
+    nightVision = bool
+end)
+
+local aimbot = section:Toggle("Aimbot Enabled", function(bool)
+   aimbotEnabled = bool
+
+   toggleHook()
+end)
+
+local dropdown = section:Dropdown("Aimbot Type")
+local silentAimToggle
+local autofireToggled
+
+autofireToggled = dropdown:Toggle("Autofire", function()
+    aimbotType = "Autofire"
+    silentAimToggle:Set(false)
+
+    if aimbotEnabled and hookEnabled then
+        wait()
+        toggleHook()
+        wait()
+        toggleHook()
+    end
+end)
+
+silentAimToggle = dropdown:Toggle("Magic Bullet", function()  
+    aimbotType = "Silent"
+    autofireToggled:Set(false)
+
+    if aimbotEnabled and hookEnabled then
+        wait()
+        toggleHook()
+        wait()
+        toggleHook()
+    end
+end)
+
+local snaplinesToggler = section:Toggle("Snaplines", function(bool)
+    espLib.espSettings.Snaplines = bool
+ 
+    if bool then
+        createSnapline()
+    else
+        if activeSnapline then  
+            activeSnapline:Destroy()
+            activeSnapline = nil
+        end
+    end
+end)
+
+local FovOriginDropdown = section:Dropdown("FovOrigin")
+local centerOrigin
+local bottomOrigin
+
+centerOrigin = FovOriginDropdown:Toggle("Center", function()
+    snaplinesOrigin = "Center"
+    bottomOrigin:Set(false)
+end)
+centerOrigin:Set(true)
+
+bottomOrigin = FovOriginDropdown:Toggle("Bottom Middle", function()
+    snaplinesOrigin = "Bottom Middle"
+    centerOrigin:Set(false)
+end)
+
+local fovToggle = section:Toggle("Fov Circle", function(bool)
+    espLib.espSettings.FovCircle = bool
+
+    if bool then
+        espLib.drawFOVCircle(false)
+    else
+        removeFovCircle()
+    end
+end)
+
+section:Slider("Fov Radius", function(val)
+    espLib.espSettings.FovRadius = val * 2
+
+    if espLib.espSettings.FovCircle then
+        wait()
+        removeFovCircle()
+        wait()
+        espLib.drawFOVCircle(false)
+    end
+end, 360, 0)
+
+local autoMeleeEnemyToggle = otherCombat:Toggle("Silent Melee", function(bool)
+    autoMeleeEnemy = bool
+end)
+
+local autoMeleeOreToggle = otherCombat:Toggle("Silent Farm", function(bool)
+    autoMeleeOre = bool
+end)
+
+--------------------ESP------------------------------------------
+local espSection = visuals:Section("ESP")
+local worldEspSection = visuals:Section("World ESP")
+local espTitle = espSection:Title("Enemy Settings")
+local espColors = visuals:Section("Colors")
+local espTitle = espColors:Title("Enemy Colors")
+
+local cornerBoxes = espSection:Toggle("Corner Boxes", function(bool)
+    espLib.espSettings.CornerBoxes = bool
+
+    if bool then
+        for _, enemy in pairs(CS:GetTagged("Enemy")) do
+            local hrp = enemy:FindFirstChild("HumanoidRootPart")
+
+            if hrp then
+                createESPBox(hrp)
+            end
+        end
+    else
+        destroyCornerBoxes()
+    end
+end)
+
+espColors:ColorWheel("Corner Colors", function(color)
+    espLib.espColors.CornerBoxes = color
+end)
+
+local chams = espSection:Toggle("Chams", function(bool)
+    espLib.espSettings.Chams = bool
+
+    if bool then
+        applyChamsAll()
+        else
+        removeChams()
+    end
+end)
+
+espColors:ColorWheel("Chams Color", function(color)
+    espLib.espColors.Chams = color
+end)
+
+espSection:Slider("Chams Transparency", function(val)
+    espLib.transparencySettings.Chams = val / 10
+end, 10, 0)
+
+local skeletonToggle = espSection:Toggle("Skeleton", function(bool)
+    esp_settings.Enabled = bool
+    esp_settings.skel = bool
+end)
+
+local healthBarToggle = espSection:Toggle("Health", function(bool)
+    enemyHealth = bool
+end)
+
+local nameTags = espSection:Toggle("Name", function(bool)
+    espLib.espSettings.Nametags = bool
+end)
+
+espColors:ColorWheel("Name Color", function(color)
+    espLib.espColors.TextLabels = color
+end)
+
+local displayBoxes = worldEspSection:Toggle("Info Displays", function(bool)
+    infoDisplay = bool
+
+    if bool then
+        applyDisplayBoxes()
+    else
+        removeDisplayBoxes()
+    end
+end)
+
+local oreHighlight = worldEspSection:Toggle("Ore Highlight", function(bool)
+    oreESP = bool
+
+    if not bool then
+        removeOreESP()
+    end
+end)
+
+local oreName = worldEspSection:Toggle("Ore Name", function(bool)
+    oreName = bool
+
+    if not bool then
+        removeOreName()
+    end
+end)
+-------------------------------MISC---------------------------------------
